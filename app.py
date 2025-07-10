@@ -13,6 +13,13 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
+# Initialize AzureOpenAI client
+client = openai.AzureOpenAI(
+    api_key=AZURE_OPENAI_API_KEY,
+    api_version="2024-04-14",
+    azure_endpoint=AZURE_OPENAI_ENDPOINT
+)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -49,15 +56,9 @@ def chat():
 
     prompt = f"Context:\n{documents}\n\nQuestion: {user_question}"
 
-    # Ask Azure OpenAI
-    openai.api_type = "azure"
-    openai.api_base = AZURE_OPENAI_ENDPOINT
-    openai.api_version = "2024-04-14"
-    openai.api_key = AZURE_OPENAI_API_KEY
-
     try:
-        response = openai.ChatCompletion.create(
-            engine=AZURE_OPENAI_DEPLOYMENT_NAME,
+        response = client.chat.completions.create(
+            model=AZURE_OPENAI_DEPLOYMENT_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
@@ -65,7 +66,7 @@ def chat():
             temperature=0,
             max_tokens=1000
         )
-        answer = response['choices'][0]['message']['content']
+        answer = response.choices[0].message.content
         return jsonify({'answer': answer})
 
     except Exception as e:
