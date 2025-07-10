@@ -5,6 +5,7 @@ const promptInput = promptForm.querySelector(".prompt-input");
 const themeToggleBtn = document.querySelector("#theme-toggle-btn");
 
 let controller, typingInterval;
+const chatHistory = [];
 
 const isLightTheme = localStorage.getItem("themeColor") === "light_mode";
 document.body.classList.toggle("light-theme", isLightTheme);
@@ -40,18 +41,17 @@ const generateResponse = async (botMsgDiv, userMessage) => {
   controller = new AbortController();
 
   try {
-    const response = await fetch("/chat", {
+    const response = await fetch('/chat', {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question: userMessage }),
       signal: controller.signal
     });
 
     const data = await response.json();
-    const responseText = data.answer.trim();
-    typingEffect(responseText, textElement, botMsgDiv);
+    if (!response.ok) throw new Error(data.answer || "Unknown error");
+
+    typingEffect(data.answer, textElement, botMsgDiv);
   } catch (error) {
     textElement.textContent = error.name === "AbortError" ? "Response generation stopped." : error.message;
     textElement.style.color = "#d62939";
@@ -73,7 +73,7 @@ const handleFormSubmit = (e) => {
   scrollToBottom();
 
   setTimeout(() => {
-    const botMsgHTML = `<img class="avatar" src="sans.svg" /> <p class="message-text">Just a sec...</p>`;
+    const botMsgHTML = `<span class="material-symbols-rounded">smart_toy</span> <p class="message-text">Just a sec...</p>`;
     const botMsgDiv = createMessageElement(botMsgHTML, "bot-message", "loading");
     chatsContainer.appendChild(botMsgDiv);
     scrollToBottom();
