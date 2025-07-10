@@ -1,3 +1,22 @@
+import os
+from flask import Flask, render_template, request, jsonify
+import openai
+import requests
+
+app = Flask(__name__)
+
+# Load Azure environment variables
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
+AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
+AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
 @app.route('/chat', methods=['POST'])
 def chat():
     user_question = request.json.get('question')
@@ -51,3 +70,6 @@ def chat():
 
     except Exception as e:
         return jsonify({'answer': f'OpenAI error: {str(e)}'}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8000)
