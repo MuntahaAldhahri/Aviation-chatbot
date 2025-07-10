@@ -4,11 +4,7 @@ const promptForm = document.querySelector(".prompt-form");
 const promptInput = promptForm.querySelector(".prompt-input");
 const themeToggleBtn = document.querySelector("#theme-toggle-btn");
 
-const AZURE_API_URL = "https://sans.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-02-15-preview";
-const AZURE_API_KEY = "EYEl4NjklDJy24f3QfixOeOhuXOr8mdYAFE8XsC1Umn7DEAcQXJoJQQJ99BFACYeBjFXJ3w3AAABACOGBbcl";
-
 let controller, typingInterval;
-const chatHistory = [];
 
 const isLightTheme = localStorage.getItem("themeColor") === "light_mode";
 document.body.classList.toggle("light-theme", isLightTheme);
@@ -43,29 +39,19 @@ const generateResponse = async (botMsgDiv, userMessage) => {
   const textElement = botMsgDiv.querySelector(".message-text");
   controller = new AbortController();
 
-  chatHistory.push({ role: "user", content: userMessage });
-
   try {
-    const response = await fetch(AZURE_API_URL, {
+    const response = await fetch("/chat", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "api-key": AZURE_API_KEY
+        "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        messages: chatHistory,
-        max_tokens: 1000
-      }),
+      body: JSON.stringify({ question: userMessage }),
       signal: controller.signal
     });
 
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error.message);
-
-    const responseText = data.choices[0].message.content.trim();
+    const responseText = data.answer.trim();
     typingEffect(responseText, textElement, botMsgDiv);
-
-    chatHistory.push({ role: "assistant", content: responseText });
   } catch (error) {
     textElement.textContent = error.name === "AbortError" ? "Response generation stopped." : error.message;
     textElement.style.color = "#d62939";
@@ -110,7 +96,6 @@ themeToggleBtn.addEventListener("click", () => {
 });
 
 document.querySelector("#delete-chats-btn").addEventListener("click", () => {
-  chatHistory.length = 0;
   chatsContainer.innerHTML = "";
   document.body.classList.remove("chats-active", "bot-responding");
 });
