@@ -7,8 +7,8 @@ app = Flask(__name__)
 
 # Load Azure environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")  # like https://sans.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")  # like gpt-4-1
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
@@ -39,13 +39,13 @@ def chat():
     except Exception as e:
         return jsonify({"answer": f"Search error: {str(e)}"})
 
-    # Collect context documents
+    # Collect documents
     documents = "\n".join([doc.get('content', '') for doc in search_results.get('value', [])])
 
-    # Step 2: Query Azure OpenAI (Chat Completions)
+    # Step 2: Ask Azure OpenAI using the retrieved context
     openai.api_type = "azure"
     openai.api_base = AZURE_OPENAI_ENDPOINT
-    openai.api_version = "2024-02-15-preview"
+    openai.api_version = "2025-04-14"  
     openai.api_key = AZURE_OPENAI_API_KEY
 
     prompt = f"Answer the following question ONLY using the provided context.\n\nContext:\n{documents}\n\nQuestion: {user_question}"
@@ -59,7 +59,7 @@ def chat():
             ],
             temperature=0
         )
-        answer = response['choices'][0]['message']['content']
+        answer = response['choices'][0]['message']['content'].strip()
     except Exception as e:
         answer = f"OpenAI error: {str(e)}"
 
