@@ -1,7 +1,8 @@
 import os
 from flask import Flask, render_template, request, jsonify
-from openai import AzureOpenAI
+import openai
 import requests
+import asyncio
 
 app = Flask(__name__)
 
@@ -13,6 +14,13 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
+# Configure OpenAI client (>=1.0.0)
+client = openai.AsyncAzureOpenAI(
+    api_key=AZURE_OPENAI_API_KEY,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_version="2024-04-14"
+)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -21,9 +29,11 @@ def index():
 def chat():
     user_question = request.json.get('question')
 
+    # Check configs
     if not all([AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME]):
         return jsonify({'answer': 'Server misconfiguration: Missing Azure OpenAI setup.'}), 500
 
+    # Prepare Cognitive Search (if set up)
     documents = ""
     if AZURE_SEARCH_API_KEY and AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_INDEX_NAME:
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
@@ -37,6 +47,7 @@ def chat():
         except Exception as e:
             return jsonify({'answer': f'Search error: {str(e)}'}), 500
 
+    # Compose prompt with strict instruction
     system_prompt = (
         "You are a helpful assistant for internal company policies. "
         "ONLY answer using the content retrieved from the Azure Cognitive Search index connected to this chat. "
@@ -46,26 +57,23 @@ def chat():
 
     prompt = f"Context:\n{documents}\n\nQuestion: {user_question}"
 
-    client = AzureOpenAI(
-        api_key=AZURE_OPENAI_API_KEY,
-        api_version="2024-04-14",
-        azure_endpoint=AZURE_OPENAI_ENDPOINT
-    )
+    async def ask_openai():
+        try:
+            response = await client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT_NAME,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0,
+                max_tokens=1000
+            )
+            answer = response.choices[0].message.content
+            return jsonify({'answer': answer})
+        except Exception as e:
+            return jsonify({'answer': f'OpenAI error: {str(e)}'}), 500
 
-    try:
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0,
-            max_tokens=1000
-        )
-        answer = response.choices[0].message.content.strip()
-        return jsonify({'answer': answer})
-    except Exception as e:
-        return jsonify({'answer': f'OpenAI error: {str(e)}'}), 500
+    return asyncio.run(ask_openai())
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
