@@ -1,6 +1,6 @@
 import os
 from flask import Flask, render_template, request, jsonify
-import openai
+from openai import AzureOpenAI
 import requests
 
 app = Flask(__name__)
@@ -12,13 +12,6 @@ AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
-
-# Initialize AzureOpenAI client
-client = openai.AzureOpenAI(
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version="2024-04-14",
-    azure_endpoint=AZURE_OPENAI_ENDPOINT
-)
 
 @app.route('/')
 def index():
@@ -56,6 +49,13 @@ def chat():
 
     prompt = f"Context:\n{documents}\n\nQuestion: {user_question}"
 
+    # Initialize Azure OpenAI client (new SDK >=1.0.0)
+    client = AzureOpenAI(
+        api_key=AZURE_OPENAI_API_KEY,
+        api_version="2024-04-14",
+        azure_endpoint=AZURE_OPENAI_ENDPOINT
+    )
+
     try:
         response = client.chat.completions.create(
             model=AZURE_OPENAI_DEPLOYMENT_NAME,
@@ -66,7 +66,7 @@ def chat():
             temperature=0,
             max_tokens=1000
         )
-        answer = response.choices[0].message.content
+        answer = response.choices[0].message.content.strip()
         return jsonify({'answer': answer})
 
     except Exception as e:
