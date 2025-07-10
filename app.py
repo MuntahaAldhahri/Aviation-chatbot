@@ -44,22 +44,20 @@ def chat():
         "\"Sorry, I couldn’t find anything relevant in the company documents.\""
     )
 
-    prompt = f"Context:\n{documents}\n\nQuestion: {user_question}"
-
-    # Setup OpenAI client (v1.0+)
-    client = openai.AzureOpenAI(
-        api_key=AZURE_OPENAI_API_KEY,
-        api_version="2024-04-01-preview",
-        azure_endpoint=AZURE_OPENAI_ENDPOINT
-    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Context:\n{documents}\n\nQuestion: {user_question}"}
+    ]
 
     try:
+        client = openai.AzureOpenAI(
+            api_key=AZURE_OPENAI_API_KEY,
+            api_version="2024-04-01-preview",
+            azure_endpoint=AZURE_OPENAI_ENDPOINT
+        )
         response = client.chat.completions.create(
             model=AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
+            messages=messages,
             temperature=0,
             max_tokens=1000
         )
