@@ -16,7 +16,7 @@ AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 # Initialize AzureOpenAI client (new SDK)
 client = AzureOpenAI(
     api_key=AZURE_OPENAI_API_KEY,
-    api_version="2024-04-14",
+    api_version="2024-12-01-preview",
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
 )
 
