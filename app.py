@@ -1,9 +1,22 @@
 import os
 from flask import Flask, render_template, request, jsonify
-from openai import AzureOpenAI
 import requests
+import openai
+from dotenv import load_dotenv
+
+load_dotenv()  # Load from .env
 
 app = Flask(__name__)
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    print("Checking environment variables...")
+    print("AZURE_OPENAI_API_KEY:", AZURE_OPENAI_API_KEY)
+    print("AZURE_OPENAI_ENDPOINT:", AZURE_OPENAI_ENDPOINT)
+    print("AZURE_OPENAI_DEPLOYMENT_NAME:", AZURE_OPENAI_DEPLOYMENT_NAME)
+    
+    user_question = request.json.get('question')
+    print("User question:", user_question)
 
 # Load environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
@@ -13,12 +26,11 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Initialize AzureOpenAI client (new SDK)
-client = AzureOpenAI(
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version="2025-04-14",
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-)
+# Configure OpenAI SDK for Azure (old SDK ≤0.28)
+openai.api_type = "azure"
+openai.api_base = AZURE_OPENAI_ENDPOINT
+openai.api_version = "2024-04-14"
+openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
 def index():
@@ -53,8 +65,8 @@ def chat():
     full_prompt = f"Context:\n{documents}\n\nQuestion: {user_question}"
 
     try:
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT_NAME,
+        response = openai.ChatCompletion.create(
+            engine=AZURE_OPENAI_DEPLOYMENT_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": full_prompt}
@@ -62,12 +74,11 @@ def chat():
             temperature=0,
             max_tokens=1000
         )
-        answer = response.choices[0].message.content
+        answer = response['choices'][0]['message']['content']
         return jsonify({'answer': answer})
 
     except Exception as e:
         return jsonify({'answer': f'OpenAI error: {str(e)}'}), 500
 
-# For local dev, also allow python app.py run
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+    app.run(host='0.0.0.0', port=5000)
