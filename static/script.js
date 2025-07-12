@@ -24,6 +24,7 @@ const addMessageToChat = (message, type) => {
     const msgDiv = createMessageElement(`<p class="message-text">${message}</p>`, `${type}-message`);
     chatsContainer.appendChild(msgDiv);
     scrollToBottom();
+    return msgDiv;
 };
 
 const handleFormSubmit = async (e) => {
@@ -33,11 +34,11 @@ const handleFormSubmit = async (e) => {
 
     document.body.classList.add("chats-active", "bot-responding");
 
-    addMessageToChat(userMessage, "user");
+    // Add user message temporarily
+    const userMsgDiv = addMessageToChat(userMessage, "user");
 
-    const botMsgDiv = createMessageElement(`<p class="message-text">...</p>`, "bot-message", "loading");
-    chatsContainer.appendChild(botMsgDiv);
-    scrollToBottom();
+    // Prepare bot message
+    const botMsgDiv = addMessageToChat("...", "bot", "loading");
 
     try {
         controller = new AbortController();
@@ -49,11 +50,18 @@ const handleFormSubmit = async (e) => {
         });
 
         const data = await response.json();
+
+        // Remove user message after bot responds
+        userMsgDiv.remove();
+
         botMsgDiv.querySelector(".message-text").textContent = data.answer || "No response.";
     } catch (error) {
-        botMsgDiv.querySelector(".message-text").textContent = error.name === "AbortError"
-            ? "Response stopped."
-            : "Error connecting to server.";
+        userMsgDiv.remove();
+
+        botMsgDiv.querySelector(".message-text").textContent =
+            error.name === "AbortError"
+                ? "Response stopped."
+                : "Error connecting to server.";
     } finally {
         botMsgDiv.classList.remove("loading");
         document.body.classList.remove("bot-responding");
