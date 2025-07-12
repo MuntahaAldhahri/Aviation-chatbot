@@ -4,6 +4,7 @@ import requests
 import openai
 from dotenv import load_dotenv
 
+# Load .env variables (optional, for local dev)
 load_dotenv()
 
 app = Flask(__name__)
@@ -16,7 +17,7 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure OpenAI SDK for Azure (old SDK ≤0.28)
+# Configure OpenAI SDK (old SDK ≤0.28.1)
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = "2024-12-01-preview"
@@ -24,7 +25,7 @@ openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return "Aviation Chatbot is running!"  # For quick test, replace with render_template('index.html') if you have it.
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -42,7 +43,7 @@ def chat():
             search_response = requests.post(search_url, headers=headers, json=search_payload)
             search_response.raise_for_status()
             search_results = search_response.json()
-            documents = "\n".join([doc.get('content', '') for doc in search_results.get('value', [])])
+            documents = "\n".join([doc.get('content', '') for doc in search_results.get('value', []) if doc.get('content')])
         except Exception as e:
             return jsonify({'answer': f'Cognitive Search error: {str(e)}'}), 500
 
