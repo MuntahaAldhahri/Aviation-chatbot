@@ -4,19 +4,9 @@ import requests
 import openai
 from dotenv import load_dotenv
 
-load_dotenv()  # Load from .env
+load_dotenv()
 
 app = Flask(__name__)
-
-@app.route('/chat', methods=['POST'])
-def chat():
-    print("Checking environment variables...")
-    print("AZURE_OPENAI_API_KEY:", AZURE_OPENAI_API_KEY)
-    print("AZURE_OPENAI_ENDPOINT:", AZURE_OPENAI_ENDPOINT)
-    print("AZURE_OPENAI_DEPLOYMENT_NAME:", AZURE_OPENAI_DEPLOYMENT_NAME)
-    
-    user_question = request.json.get('question')
-    print("User question:", user_question)
 
 # Load environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
@@ -29,7 +19,7 @@ AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 # Configure OpenAI SDK for Azure (old SDK ≤0.28)
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
-openai.api_version = "2024-04-14"
+openai.api_version = "2024-12-01-preview"
 openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
@@ -43,7 +33,6 @@ def chat():
     if not all([AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME]):
         return jsonify({'answer': 'Server misconfiguration: Missing Azure OpenAI setup.'}), 500
 
-    # Prepare search context
     documents = ""
     if AZURE_SEARCH_API_KEY and AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_INDEX_NAME:
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
