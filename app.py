@@ -34,7 +34,7 @@ client = AzureOpenAI(
 
 api_key=AZURE_OPENAI_API_KEY,
 
-api_version="2023-12-01-preview", # Updated to current version
+api_version="2025-04-14", 
 
 azure_endpoint=AZURE_OPENAI_ENDPOINT
 
