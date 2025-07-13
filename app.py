@@ -20,7 +20,7 @@ AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 # Configure OpenAI SDK (old SDK ≤0.28.1)
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
-openai.api_version = "2024-12-01-preview"
+openai.api_version = "2025-04-14"
 openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
