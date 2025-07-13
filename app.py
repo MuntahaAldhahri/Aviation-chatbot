@@ -44,7 +44,7 @@ azure_endpoint=AZURE_OPENAI_ENDPOINT
 
 def index():
 
-return "Aviation Chatbot is running!"
+  return "Aviation Chatbot is running!"
 
 @app.route('/chat', methods=['POST'])
 
