@@ -13,7 +13,7 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Set OpenAI configuration
+# Configure OpenAI for Azure
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = "2024-04-14"
@@ -26,53 +26,47 @@ def index():
 @app.route('/chat', methods=['POST'])
 def chat():
     user_question = request.json.get('question')
-    if not user_question:
-        return jsonify({'error': 'No question provided'}), 400
 
-    # Use Azure Cognitive Search to find documents
-    headers = {
-        'Content-Type': 'application/json',
-        'api-key': AZURE_SEARCH_API_KEY
-    }
-    search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
-    search_payload = {
-        "search": user_question,
-        "top": 3
-    }
-
+    # Step 1: Azure Cognitive Search
     try:
-        response = requests.post(search_url, headers=headers, json=search_payload)
-        response.raise_for_status()
-        results = response.json()
+        search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": AZURE_SEARCH_API_KEY
+        }
+        search_payload = {
+            "search": user_question,
+            "top": 3
+        }
+        search_response = requests.post(search_url, headers=headers, json=search_payload)
+        search_response.raise_for_status()
+        documents = search_response.json().get('value', [])
     except Exception as e:
-        return jsonify({'answer': 'Error connecting to search service.', 'error': str(e)}), 500
+        return jsonify({'answer': "Error connecting to server."})
 
-    if 'value' not in results or len(results['value']) == 0:
+    if not documents:
         return jsonify({'answer': "Sorry, I couldn't find anything relevant in the company documents."})
 
-    # Extract content from search results
-    extracted_content = "\n\n".join([doc.get('content', '') for doc in results['value']])
+    context = "\n\n".join([doc.get('content', '') for doc in documents])
 
-    # Prepare messages
-    messages = [
-        {"role": "system", "content": (
-            "You are a helpful assistant for company aviation policies. "
-            "ONLY answer using the content retrieved from Azure Cognitive Search. "
-            "If you don't find the answer, reply: 'Sorry, I couldn't find anything relevant in the company documents.'"
-        )},
-        {"role": "user", "content": f"Context:\n{extracted_content}\n\nQuestion: {user_question}"}
-    ]
-
+    # Step 2: OpenAI Completion
     try:
+        system_prompt = (
+            "You are a helpful assistant for company aviation policies.\n"
+            "ONLY answer using the content retrieved from Azure Cognitive Search.\n"
+            "If you don't find the answer, reply: 'Sorry, I couldn't find anything relevant in the company documents.'"
+        )
+
         completion = openai.ChatCompletion.create(
             engine=AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=messages,
-            temperature=0.2
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {user_question}"}
+            ]
         )
-        answer = completion['choices'][0]['message']['content'].strip()
-        return jsonify({'answer': answer})
-    except Exception as e:
-        return jsonify({'answer': 'Error connecting to server.', 'error': str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(debug=True)
+        answer = completion['choices'][0]['message']['content']
+        return jsonify({'answer': answer})
+
+    except Exception as e:
+        return jsonify({'answer': "Error connecting to server."})
