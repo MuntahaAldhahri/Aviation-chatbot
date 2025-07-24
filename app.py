@@ -4,31 +4,33 @@ import requests
 import openai
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load .env variables
 load_dotenv()
 
 app = Flask(__name__)
 
-# Azure OpenAI environment variables
+# Azure OpenAI config
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 
-# Azure Cognitive Search environment variables
+# Azure Cognitive Search config
 AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure OpenAI for Azure
+# Configure OpenAI client for Azure
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = "2025-04-14"
 openai.api_key = AZURE_OPENAI_API_KEY
 
+# Serve chat UI
 @app.route('/')
 def index():
-    return "✅ Aviation Chatbot is running!"
+    return render_template('index.html')
 
+# Handle chat logic
 @app.route('/chat', methods=['POST'])
 def chat():
     user_question = request.json.get('question')
@@ -41,6 +43,7 @@ def chat():
 
     documents = ""
 
+    # Call Cognitive Search if available
     if all([AZURE_SEARCH_API_KEY, AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_INDEX_NAME]):
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
         headers = {'Content-Type': 'application/json', 'api-key': AZURE_SEARCH_API_KEY}
@@ -54,6 +57,7 @@ def chat():
         except Exception as e:
             return jsonify({'answer': f'Cognitive Search error: {str(e)}'}), 500
 
+    # Construct chat messages
     system_prompt = (
         "You are a helpful assistant for company aviation policies. "
         "ONLY answer using the content retrieved from Azure Cognitive Search. "
@@ -68,6 +72,7 @@ def chat():
     if documents:
         messages.insert(1, {"role": "assistant", "content": f"Retrieved documents:\n{documents}"})
 
+    # Call Azure OpenAI
     try:
         response = openai.ChatCompletion.create(
             engine=AZURE_OPENAI_DEPLOYMENT_NAME,
@@ -80,5 +85,6 @@ def chat():
     except Exception as e:
         return jsonify({'answer': f'OpenAI error: {str(e)}'}), 500
 
+# Run app locally
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
