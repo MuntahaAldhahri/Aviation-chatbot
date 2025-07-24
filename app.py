@@ -1,3 +1,33 @@
+import os
+from flask import Flask, render_template, request, jsonify
+import requests
+from openai import AzureOpenAI
+from dotenv import load_dotenv
+
+# Load .env variables
+load_dotenv()
+
+app = Flask(__name__)
+
+# Load environment variables
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
+AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
+AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
+
+# Initialize Azure OpenAI client
+client = AzureOpenAI(
+    api_key=AZURE_OPENAI_API_KEY,
+    api_version="2025-04-14", 
+    azure_endpoint=AZURE_OPENAI_ENDPOINT
+)
+
+@app.route('/')
+def index():
+    return "Aviation Chatbot is running!"
+
 @app.route('/chat', methods=['POST'])
 def chat():
     user_question = request.json.get('question')
@@ -48,3 +78,6 @@ def chat():
         return jsonify({'answer': answer})
     except Exception as e:
         return jsonify({'answer': f'OpenAI error: {str(e)}'}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
