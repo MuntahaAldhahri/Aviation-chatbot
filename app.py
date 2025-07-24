@@ -1,21 +1,23 @@
 import os
 from flask import Flask, render_template, request, jsonify
-from openai import AzureOpenAI
+import openai
+import requests
 
 app = Flask(__name__)
 
 # Load environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")  # gpt-4.1
-AZURE_OPENAI_API_VERSION = "2025-04-14"
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
+AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
+AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Initialize Azure OpenAI client
-client = AzureOpenAI(
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version=AZURE_OPENAI_API_VERSION,
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-)
+# Configure OpenAI
+openai.api_type = "azure"
+openai.api_key = AZURE_OPENAI_API_KEY
+openai.api_base = AZURE_OPENAI_ENDPOINT
+openai.api_version = "2024-04-14"
 
 @app.route('/')
 def index():
@@ -25,29 +27,38 @@ def index():
 def chat():
     user_question = request.json.get('question')
 
-    try:
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful assistant for company aviation policies.\n"
-                        "ONLY answer using the content retrieved from Azure Cognitive Search.\n"
-                        "If you don't find the answer, reply: 'Sorry, I couldn't find anything relevant in the company documents.'"
-                    )
-                },
-                {"role": "user", "content": user_question}
-            ],
-            temperature=0.3,
-            max_tokens=800
-        )
+    # Step 1: Retrieve documents from Azure Cognitive Search
+    search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": AZURE_SEARCH_API_KEY
+    }
+    search_payload = {
+        "search": user_question,
+        "top": 3
+    }
+    response = requests.post(search_url, headers=headers, json=search_payload)
+    documents = response.json().get('value', [])
 
-        answer = response.choices[0].message.content
-        return jsonify({'response': answer})
+    if not documents:
+        return jsonify({'answer': "Sorry, I couldn't find anything relevant in the company documents."})
 
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    context = "\n".join([doc.get('content', '') for doc in documents])
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    # Step 2: Send to OpenAI
+    system_prompt = (
+        "You are a helpful assistant for company aviation policies.\n"
+        "ONLY answer using the content retrieved from Azure Cognitive Search.\n"
+        "If you don't find the answer, reply: 'Sorry, I couldn't find anything relevant in the company documents.'"
+    )
+
+    completion = openai.ChatCompletion.create(
+        engine=AZURE_OPENAI_DEPLOYMENT_NAME,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {user_question}"}
+        ]
+    )
+
+    answer = completion.choices[0].message['content']
+    return jsonify({'answer': answer})
