@@ -47,10 +47,8 @@ def index():
   return "Aviation Chatbot is running!"
 
 @app.route('/chat', methods=['POST'])
-
 def chat():
-
-user_question = request.json.get('question')
+    user_question = request.json.get('question')
 
 if not user_question:
 
