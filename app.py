@@ -1,8 +1,7 @@
 import os
-from flask import Flask, request, jsonify, render_template
-from openai import AzureOpenAI
-from azure.search.documents import SearchClient
-from azure.core.credentials import AzureKeyCredential
+from flask import Flask, render_template, request, jsonify
+import openai
+import requests
 
 app = Flask(__name__)
 
@@ -10,24 +9,15 @@ app = Flask(__name__)
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-
+AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
-AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Initialize OpenAI client
-openai_client = AzureOpenAI(
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version="2024-04-14",
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-)
-
-# Initialize Azure Cognitive Search client
-search_client = SearchClient(
-    endpoint=AZURE_SEARCH_ENDPOINT,
-    index_name=AZURE_SEARCH_INDEX_NAME,
-    credential=AzureKeyCredential(AZURE_SEARCH_KEY)
-)
+# Configure OpenAI for Azure
+openai.api_type = "azure"
+openai.api_base = AZURE_OPENAI_ENDPOINT
+openai.api_version = "2024-04-15-preview"
+openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
 def index():
@@ -35,41 +25,46 @@ def index():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    user_question = request.json.get("question", "")
+    user_question = request.json.get('question')
 
+    if not all([AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME]):
+        return jsonify({"answer": "Azure OpenAI configuration is missing."})
+
+    # Query Azure Cognitive Search
+    headers = {
+        'Content-Type': 'application/json',
+        'api-key': AZURE_SEARCH_API_KEY
+    }
+    search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
+    search_payload = {
+        "search": user_question,
+        "top": 3
+    }
     try:
-        search_results = search_client.search(user_question, top=3)
-        sources = []
-
-        for result in search_results:
-            content = result.get("content", "")
-            filename = result.get("filename", "Document")
-            sources.append(f"{filename}:\n{content}")
-
-        if not sources:
+        search_response = requests.post(search_url, headers=headers, json=search_payload)
+        search_response.raise_for_status()
+        search_results = search_response.json()
+        documents = [doc.get("content", "") for doc in search_results.get("value", [])]
+        if not documents:
             return jsonify({"answer": "Sorry, I couldn't find anything relevant in the company documents."})
-
-        # Combine search snippets into one prompt
-        context = "\n\n".join(sources)
-        prompt = f"""Use the following company documents to answer the question.
-Documents:
-{context}
-
-Question: {user_question}
-Answer:"""
-
-        response = openai_client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-
-        answer = response.choices[0].message.content.strip()
-        return jsonify({"answer": answer})
-
     except Exception as e:
-        print("ERROR:", e)
-        return jsonify({"answer": "Error connecting to server."})
+        return jsonify({"answer": f"Error connecting to search service: {str(e)}"})
 
-if __name__ == "__main__":
+    # Ask Azure OpenAI
+    try:
+        response = openai.ChatCompletion.create(
+            engine=AZURE_OPENAI_DEPLOYMENT_NAME,
+            messages=[
+                {"role": "system", "content": "Answer only based on the company documents provided."},
+                {"role": "user", "content": f"{user_question}\n\nContext:\n" + "\n---\n".join(documents)}
+            ],
+            temperature=0.5,
+            max_tokens=800,
+        )
+        answer = response.choices[0].message['content']
+        return jsonify({"answer": answer})
+    except Exception as e:
+        return jsonify({"answer": f"Error connecting to server: {str(e)}"})
+
+if __name__ == '__main__':
     app.run(debug=True)
