@@ -1,32 +1,33 @@
 import os
 from flask import Flask, render_template, request, jsonify
 import requests
-from openai import AzureOpenAI
+import openai
 from dotenv import load_dotenv
 
-# Load .env variables
+# Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
 
-# Load environment variables
+# Azure OpenAI environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+
+# Azure Cognitive Search environment variables
 AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Initialize Azure OpenAI client
-client = AzureOpenAI(
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version="2025-04-14", 
-    azure_endpoint=AZURE_OPENAI_ENDPOINT
-)
+# Configure OpenAI for Azure
+openai.api_type = "azure"
+openai.api_base = AZURE_OPENAI_ENDPOINT
+openai.api_version = "2025-04-14"
+openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
 def index():
-    return "Aviation Chatbot is running!"
+    return "✅ Aviation Chatbot is running!"
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -68,8 +69,8 @@ def chat():
         messages.insert(1, {"role": "assistant", "content": f"Retrieved documents:\n{documents}"})
 
     try:
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT_NAME,
+        response = openai.ChatCompletion.create(
+            engine=AZURE_OPENAI_DEPLOYMENT_NAME,
             messages=messages,
             temperature=0,
             max_tokens=1000
