@@ -13,7 +13,7 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Azure OpenAI configuration
+# Configure Azure OpenAI
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = "2024-04-15-preview"
@@ -27,19 +27,24 @@ def index():
 def chat():
     user_question = request.json.get('question', '')
 
-    # Check if config is set
+    # Check that all config is set
     if not all([
-        AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME,
-        AZURE_SEARCH_API_KEY, AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_INDEX_NAME
+        AZURE_OPENAI_API_KEY,
+        AZURE_OPENAI_ENDPOINT,
+        AZURE_OPENAI_DEPLOYMENT_NAME,
+        AZURE_SEARCH_API_KEY,
+        AZURE_SEARCH_ENDPOINT,
+        AZURE_SEARCH_INDEX_NAME
     ]):
-        return jsonify({"answer": "Server configuration error. Please check your environment settings."})
+        return jsonify({"answer": "Server configuration error. Please check environment variables."})
 
-    # Search Cognitive Search
+    # === Cognitive Search ===
     try:
         search_headers = {
             'Content-Type': 'application/json',
             'api-key': AZURE_SEARCH_API_KEY
         }
+
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
         search_payload = {
             "search": user_question,
@@ -53,6 +58,9 @@ def chat():
         search_response.raise_for_status()
         search_results = search_response.json()
 
+        # Log results for debugging
+        print("Search Results:", search_results)
+
         docs = [doc.get("content", "") for doc in search_results.get("value", [])]
 
         if not docs:
@@ -61,9 +69,14 @@ def chat():
     except Exception as e:
         return jsonify({"answer": f"Error connecting to search service: {str(e)}"})
 
-    # Call Azure OpenAI with document context
+    # === Call Azure OpenAI ===
     try:
         context = "\n---\n".join(docs)
+
+        # Limit context size (optional safety)
+        if len(context) > 4000:
+            context = context[:4000] + "\n\n...[truncated]..."
+
         response = openai.ChatCompletion.create(
             engine=AZURE_OPENAI_DEPLOYMENT_NAME,
             messages=[
@@ -71,11 +84,14 @@ def chat():
                     "role": "system",
                     "content": (
                         "You are a helpful and friendly assistant. "
-                        "Only use the context provided from the company documents. "
-                        "If the answer is not found in the context, say you couldn’t find anything relevant."
+                        "Only answer using the provided company documents. "
+                        "If the answer is not in the documents, politely say so."
                     )
                 },
-                {"role": "user", "content": f"{user_question}\n\nContext:\n{context}"}
+                {
+                    "role": "user",
+                    "content": f"{user_question}\n\nContext:\n{context}"
+                }
             ],
             temperature=0.5,
             max_tokens=800,
