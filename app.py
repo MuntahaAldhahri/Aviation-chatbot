@@ -7,16 +7,16 @@ app = Flask(__name__)
 
 # Load environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")  # Should be .openai.azure.com
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure Azure OpenAI (Global Standard)
+# Configure Azure OpenAI
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
-openai.api_version = "2024-11-20"  
+openai.api_version = "2024-12-01-preview"
 openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
@@ -27,56 +27,29 @@ def index():
 def chat():
     user_question = request.json.get('question', '')
 
-    # Check that all config is set
-    if not all([
-        AZURE_OPENAI_API_KEY,
-        AZURE_OPENAI_ENDPOINT,
-        AZURE_OPENAI_DEPLOYMENT_NAME,
-        AZURE_SEARCH_API_KEY,
-        AZURE_SEARCH_ENDPOINT,
-        AZURE_SEARCH_INDEX_NAME
-    ]):
-        return jsonify({"answer": "Server configuration error. Please check environment variables."})
-
-    # === Cognitive Search ===
     try:
-        search_headers = {
-            'Content-Type': 'application/json',
-            'api-key': AZURE_SEARCH_API_KEY
+        # Step 1: Query Azure Cognitive Search for relevant documents
+        search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-07-01-Preview"
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": AZURE_SEARCH_API_KEY
         }
-
-        search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2021-04-30-Preview"
         search_payload = {
             "search": user_question,
-            "top": 3,
-            "queryType": "semantic",
-            "semanticConfiguration": "default",
-            "queryLanguage": "en-us"
+            "top": 5
         }
 
-        search_response = requests.post(search_url, headers=search_headers, json=search_payload)
+        search_response = requests.post(search_url, headers=headers, json=search_payload)
         search_response.raise_for_status()
-        search_results = search_response.json()
+        results = search_response.json()
+        documents = [doc.get("content", "") for doc in results.get("value", [])]
+        context = "\n\n".join(documents)
 
-        # Log results for debugging
-        print("Search Results:", search_results)
-
-        docs = [doc.get("content", "") for doc in search_results.get("value", [])]
-
-        if not docs:
-            return jsonify({"answer": "Hi! I couldn’t find anything related to that in the company documents. Try rephrasing or asking about a specific policy."})
-
-    except Exception as e:
-        return jsonify({"answer": f"Error connecting to search service: {str(e)}"})
-
-    # === Call Azure OpenAI ===
-    try:
-        context = "\n---\n".join(docs)
-
-        # Limit context size
+        # Limit context size to 4000 characters (adjustable)
         if len(context) > 4000:
             context = context[:4000] + "\n\n...[truncated]..."
 
+        # Step 2: Send to OpenAI with RAG prompt
         response = openai.ChatCompletion.create(
             engine=AZURE_OPENAI_DEPLOYMENT_NAME,
             messages=[
@@ -102,6 +75,7 @@ def chat():
 
     except Exception as e:
         return jsonify({"answer": f"Error connecting to OpenAI service: {str(e)}"})
+
 
 if __name__ == '__main__':
     app.run(debug=True)
