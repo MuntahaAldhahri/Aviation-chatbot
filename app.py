@@ -13,10 +13,10 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure Azure OpenAI
+# Configure Azure OpenAI (Global Standard)
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
-openai.api_version = "2024-04-15-preview"
+openai.api_version = "2024-12-01-preview"  
 openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
@@ -73,7 +73,7 @@ def chat():
     try:
         context = "\n---\n".join(docs)
 
-        # Limit context size (optional safety)
+        # Limit context size
         if len(context) > 4000:
             context = context[:4000] + "\n\n...[truncated]..."
 
