@@ -16,7 +16,7 @@ AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 # Configure Azure OpenAI
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
-openai.api_version = "2024-12-01-preview"
+openai.api_version = "2025-01-01-preview"
 openai.api_key = AZURE_OPENAI_API_KEY
 
 @app.route('/')
