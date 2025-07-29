@@ -29,13 +29,7 @@ def chat():
     user_question = request.json.get('question', '')
 
     try:
-        print("🔍 DEBUG: OpenAI Call Preparation")
-        print("🔧 Endpoint:", openai.api_base)
-        print("🔧 Deployment (engine):", AZURE_OPENAI_DEPLOYMENT_NAME)
-        print("🔧 API Version:", openai.api_version)
-        print("🔧 API Key starts with:", AZURE_OPENAI_API_KEY[:5])
-
-        # Step 1: Query Azure Cognitive Search
+        # Step 1: Query Azure Cognitive Search for relevant documents
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-07-01-Preview"
         headers = {
             "Content-Type": "application/json",
@@ -52,12 +46,13 @@ def chat():
         documents = [doc.get("content", "") for doc in results.get("value", [])]
         context = "\n\n".join(documents)
 
+        # Limit context size
         if len(context) > 4000:
             context = context[:4000] + "\n\n...[truncated]..."
 
-        # Step 2: Send to OpenAI
+        # Step 2: Send to Azure OpenAI
         response = openai.ChatCompletion.create(
-            engine=AZURE_OPENAI_DEPLOYMENT_NAME,
+            deployment_id=AZURE_OPENAI_DEPLOYMENT_NAME,
             messages=[
                 {
                     "role": "system",
@@ -82,6 +77,7 @@ def chat():
     except Exception as e:
         print("❌ ERROR during OpenAI call:", str(e))
         return jsonify({"answer": f"Error connecting to OpenAI service: {str(e)}"})
+
 
 if __name__ == '__main__':
     app.run(debug=True)
