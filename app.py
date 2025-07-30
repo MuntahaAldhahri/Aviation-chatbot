@@ -26,10 +26,15 @@ def index():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    user_question = request.json.get('question', '')
+    user_question = request.json.get('question', '').strip()
 
     try:
-        # Step 1: Query Azure Cognitive Search for relevant documents
+        # Friendly responses for general greetings
+        friendly_phrases = ["hi", "hello", "hey", "how are you", "good morning", "good evening", "what's up"]
+        if user_question.lower() in friendly_phrases:
+            return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
+
+        # Step 1: Search documents using Azure Cognitive Search
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-07-01-Preview"
         headers = {
             "Content-Type": "application/json",
@@ -37,7 +42,7 @@ def chat():
         }
         search_payload = {
             "search": user_question,
-            "top": 5
+            "top": 3
         }
 
         search_response = requests.post(search_url, headers=headers, json=search_payload)
@@ -46,9 +51,8 @@ def chat():
         documents = [doc.get("content", "") for doc in results.get("value", [])]
         context = "\n\n".join(documents)
 
-        # Limit context size
-        if len(context) > 4000:
-            context = context[:4000] + "\n\n...[truncated]..."
+        if not context.strip():
+            return jsonify({"answer": "Sorry, I couldn’t find anything related to your question in the uploaded documents."})
 
         # Step 2: Send to Azure OpenAI
         response = openai.ChatCompletion.create(
@@ -57,9 +61,8 @@ def chat():
                 {
                     "role": "system",
                     "content": (
-                        "You are a helpful and friendly assistant. "
-                        "Only answer using the provided company documents. "
-                        "If the answer is not in the documents, politely say so."
+                        "You are a helpful and friendly assistant. Use only the context from the company's documents to answer. "
+                        "If you don't find an answer in the context, respond that it is not available."
                     )
                 },
                 {
