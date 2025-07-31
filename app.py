@@ -56,7 +56,7 @@ def chat():
 
         # Step 2: Send to Azure OpenAI
         response = openai.ChatCompletion.create(
-            deployment_id=AZURE_OPENAI_DEPLOYMENT_NAME,
+            engine=AZURE_OPENAI_DEPLOYMENT_NAME,  
             messages=[
                 {
                     "role": "system",
