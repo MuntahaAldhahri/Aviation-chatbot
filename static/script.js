@@ -89,3 +89,4 @@ document.querySelector("#delete-chats-btn").addEventListener("click", () => {
 });
 
 promptForm.addEventListener("submit", handleFormSubmit);
+
