@@ -1,5 +1,6 @@
 import os
 import time
+import random
 from flask import Flask, request, jsonify, render_template
 import openai
 import requests
@@ -15,23 +16,20 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure OpenAI for Azure
+# Configure OpenAI
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = AZURE_OPENAI_API_VERSION
 openai.api_key = AZURE_OPENAI_API_KEY
 
-# Homepage
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# Health check
 @app.route('/healthz')
 def health():
     return "OK", 200
 
-# Chat endpoint
 @app.route('/chat', methods=['POST'])
 def chat():
     data = request.get_json()
@@ -40,13 +38,13 @@ def chat():
     if not user_question:
         return jsonify({"answer": "Please enter a valid question."}), 400
 
-    # Friendly greetings shortcut
+    # Friendly greetings
     friendly_phrases = ["hi", "hello", "hey", "how are you", "good morning", "good evening", "what's up"]
     if user_question.lower() in friendly_phrases:
         return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
 
     try:
-        # Step 1: Azure Cognitive Search
+        # Step 1: Cognitive Search
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-07-01-Preview"
         headers = {
             "Content-Type": "application/json",
@@ -60,13 +58,14 @@ def chat():
         search_response = requests.post(search_url, headers=headers, json=search_payload)
         search_response.raise_for_status()
         results = search_response.json()
+
         documents = [doc.get("content", "") for doc in results.get("value", [])]
-        context = "\n\n".join(documents)
+        context = "\n\n".join(documents)[:2000]  #Limit to reduce tokens
 
         if not context.strip():
             return jsonify({"answer": "Sorry, I couldn’t find anything related to your question in the uploaded documents."})
 
-        # Step 2: Azure OpenAI with retry on rate limit
+        # Step 2: OpenAI ChatCompletion with exponential backoff
         retry_attempts = 3
         for attempt in range(retry_attempts):
             try:
@@ -76,8 +75,9 @@ def chat():
                         {
                             "role": "system",
                             "content": (
-                                "You are a helpful and accurate assistant for aviation operations. Only use the provided context "
-                                "from company PDF documents to answer. If no relevant information is found, say so honestly."
+                                "You are a helpful and accurate assistant for aviation operations. "
+                                "Only use the provided context from company PDF documents to answer. "
+                                "If no relevant information is found, say so honestly."
                             )
                         },
                         {
@@ -92,10 +92,11 @@ def chat():
                 return jsonify({"answer": answer})
 
             except openai.error.RateLimitError:
-                if attempt < retry_attempts - 1:
-                    time.sleep(5)
-                else:
-                    return jsonify({"answer": "Rate limit exceeded. Please wait a few seconds and try again."}), 429
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                print(f"⚠️ Rate limit hit. Retrying in {wait_time:.2f} seconds...")
+                time.sleep(wait_time)
+
+        return jsonify({"answer": "Rate limit exceeded. Please wait and try again later."}), 429
 
     except Exception as e:
         print("❌ ERROR during OpenAI or Search call:", str(e))
