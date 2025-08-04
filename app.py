@@ -21,8 +21,17 @@ openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = AZURE_OPENAI_API_VERSION
 openai.api_key = AZURE_OPENAI_API_KEY
 
-import time
+# Homepage
+@app.route('/')
+def index():
+    return render_template('index.html')
 
+# Health check
+@app.route('/healthz')
+def health():
+    return "OK", 200
+
+# Chat endpoint
 @app.route('/chat', methods=['POST'])
 def chat():
     data = request.get_json()
@@ -31,12 +40,12 @@ def chat():
     if not user_question:
         return jsonify({"answer": "Please enter a valid question."}), 400
 
-    try:
-        # Handle greetings
-        friendly_phrases = ["hi", "hello", "hey", "how are you", "good morning", "good evening", "what's up"]
-        if user_question.lower() in friendly_phrases:
-            return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
+    # Friendly greetings shortcut
+    friendly_phrases = ["hi", "hello", "hey", "how are you", "good morning", "good evening", "what's up"]
+    if user_question.lower() in friendly_phrases:
+        return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
 
+    try:
         # Step 1: Azure Cognitive Search
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-07-01-Preview"
         headers = {
@@ -57,7 +66,7 @@ def chat():
         if not context.strip():
             return jsonify({"answer": "Sorry, I couldn’t find anything related to your question in the uploaded documents."})
 
-        # Step 2: Azure OpenAI with retry
+        # Step 2: Azure OpenAI with retry on rate limit
         retry_attempts = 3
         for attempt in range(retry_attempts):
             try:
@@ -90,8 +99,6 @@ def chat():
 
     except Exception as e:
         print("❌ ERROR during OpenAI or Search call:", str(e))
-        return jsonify({"answer": f"Error connecting to service: {str(e)}"}), 500
-
         return jsonify({"answer": f"Error connecting to service: {str(e)}"}), 500
 
 if __name__ == '__main__':
