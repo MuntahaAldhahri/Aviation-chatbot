@@ -21,13 +21,7 @@ openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = AZURE_OPENAI_API_VERSION
 openai.api_key = AZURE_OPENAI_API_KEY
 
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/healthz')
-def health():
-    return "OK", 200
+import time
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -38,12 +32,12 @@ def chat():
         return jsonify({"answer": "Please enter a valid question."}), 400
 
     try:
-        # Friendly greetings
+        # Handle greetings
         friendly_phrases = ["hi", "hello", "hey", "how are you", "good morning", "good evening", "what's up"]
         if user_question.lower() in friendly_phrases:
             return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
 
-        # Step 1: Search documents
+        # Step 1: Azure Cognitive Search
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-07-01-Preview"
         headers = {
             "Content-Type": "application/json",
@@ -63,7 +57,7 @@ def chat():
         if not context.strip():
             return jsonify({"answer": "Sorry, I couldn’t find anything related to your question in the uploaded documents."})
 
-        # Step 2: Call Azure OpenAI with retry on RateLimitError
+        # Step 2: Azure OpenAI with retry
         retry_attempts = 3
         for attempt in range(retry_attempts):
             try:
@@ -90,12 +84,14 @@ def chat():
 
             except openai.error.RateLimitError:
                 if attempt < retry_attempts - 1:
-                    time.sleep(5)  # Wait before retry
+                    time.sleep(5)
                 else:
                     return jsonify({"answer": "Rate limit exceeded. Please wait a few seconds and try again."}), 429
 
     except Exception as e:
         print("❌ ERROR during OpenAI or Search call:", str(e))
+        return jsonify({"answer": f"Error connecting to service: {str(e)}"}), 500
+
         return jsonify({"answer": f"Error connecting to service: {str(e)}"}), 500
 
 if __name__ == '__main__':
