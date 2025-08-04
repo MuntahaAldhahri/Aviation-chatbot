@@ -14,7 +14,7 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure Azure OpenAI
+# Configure OpenAI
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = AZURE_OPENAI_API_VERSION
@@ -24,17 +24,26 @@ openai.api_key = AZURE_OPENAI_API_KEY
 def index():
     return render_template('index.html')
 
+@app.route('/healthz')
+def health():
+    return "OK", 200
+
 @app.route('/chat', methods=['POST'])
 def chat():
-    user_question = request.json.get('question', '').strip()
+    data = request.get_json()
+    user_question = data.get('message', '').strip()
+
+    # Reject empty inputs to prevent quota waste
+    if not user_question:
+        return jsonify({"answer": "Please enter a valid question."}), 400
 
     try:
-        # Friendly responses for general greetings
+        # Friendly greetings shortcut
         friendly_phrases = ["hi", "hello", "hey", "how are you", "good morning", "good evening", "what's up"]
         if user_question.lower() in friendly_phrases:
             return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
 
-        # Step 1: Search documents using Azure Cognitive Search
+        # Step 1: Search documents
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-07-01-Preview"
         headers = {
             "Content-Type": "application/json",
@@ -54,15 +63,15 @@ def chat():
         if not context.strip():
             return jsonify({"answer": "Sorry, I couldn’t find anything related to your question in the uploaded documents."})
 
-        # Step 2: Send to Azure OpenAI
+        # Step 2: Call Azure OpenAI
         response = openai.ChatCompletion.create(
-            engine=AZURE_OPENAI_DEPLOYMENT_NAME,  
+            engine=AZURE_OPENAI_DEPLOYMENT_NAME,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You are a helpful and friendly assistant. Use only the context from the company's documents to answer. "
-                        "If you don't find an answer in the context, respond that it is not available."
+                        "You are a helpful and accurate assistant for aviation operations. Only use the provided context "
+                        "from company PDF documents to answer. If no relevant information is found, say so honestly."
                     )
                 },
                 {
@@ -77,10 +86,11 @@ def chat():
         answer = response.choices[0].message['content']
         return jsonify({"answer": answer})
 
+    except openai.error.RateLimitError:
+        return jsonify({"answer": "Rate limit exceeded. Please wait and try again."}), 429
     except Exception as e:
-        print("❌ ERROR during OpenAI call:", str(e))
-        return jsonify({"answer": f"Error connecting to OpenAI service: {str(e)}"})
-
+        print("❌ ERROR during OpenAI or Search call:", str(e))
+        return jsonify({"answer": f"Error connecting to service: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
