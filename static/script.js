@@ -45,7 +45,7 @@ const handleFormSubmit = async (e) => {
         const response = await fetch("/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question: userMessage }),
+            body: JSON.stringify({ message: userMessage }),  // ✅ FIXED KEY HERE
             signal: controller.signal
         });
 
@@ -89,4 +89,3 @@ document.querySelector("#delete-chats-btn").addEventListener("click", () => {
 });
 
 promptForm.addEventListener("submit", handleFormSubmit);
-
