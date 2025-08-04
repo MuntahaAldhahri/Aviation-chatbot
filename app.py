@@ -1,11 +1,12 @@
 import os
 import time
-import random
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session
 import openai
 import requests
+from uuid import uuid4
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", str(uuid4()))  # Required for session memory
 
 # Load environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
@@ -16,19 +17,28 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure OpenAI
+# Configure OpenAI for Azure
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = AZURE_OPENAI_API_VERSION
 openai.api_key = AZURE_OPENAI_API_KEY
 
+
 @app.route('/')
 def index():
     return render_template('index.html')
 
+
 @app.route('/healthz')
 def health():
     return "OK", 200
+
+
+@app.route('/reset', methods=['POST'])
+def reset_memory():
+    session.pop("chat_history", None)
+    return jsonify({"message": "Chat history cleared."})
+
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -38,13 +48,13 @@ def chat():
     if not user_question:
         return jsonify({"answer": "Please enter a valid question."}), 400
 
-    # Friendly greetings
+    # Friendly greetings shortcut
     friendly_phrases = ["hi", "hello", "hey", "how are you", "good morning", "good evening", "what's up"]
     if user_question.lower() in friendly_phrases:
         return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
 
+    # Step 1: Azure Cognitive Search
     try:
-        # Step 1: Cognitive Search
         search_url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-07-01-Preview"
         headers = {
             "Content-Type": "application/json",
@@ -58,49 +68,54 @@ def chat():
         search_response = requests.post(search_url, headers=headers, json=search_payload)
         search_response.raise_for_status()
         results = search_response.json()
-
         documents = [doc.get("content", "") for doc in results.get("value", [])]
-        context = "\n\n".join(documents)[:2000]  #Limit to reduce tokens
+        context = "\n\n".join(documents)[:2000]  # truncate if long
 
         if not context.strip():
             return jsonify({"answer": "Sorry, I couldn’t find anything related to your question in the uploaded documents."})
 
-        # Step 2: OpenAI ChatCompletion with exponential backoff
+        # Step 2: Maintain chat memory
+        chat_history = session.get("chat_history", [])
+
+        # Add current user message
+        chat_history.append({"role": "user", "content": user_question})
+
+        # Build full prompt
+        prompt = [{"role": "system", "content": (
+            "You are a helpful assistant for aviation operations. Only use the provided document context to answer questions. "
+            "If something is not in the documents, respond with that clearly."
+        )}]
+        prompt += chat_history[-5:]  # Keep recent history
+        prompt.append({"role": "user", "content": f"{user_question}\n\nContext:\n{context}"})
+
+        # Step 3: Azure OpenAI ChatCompletion
         retry_attempts = 3
         for attempt in range(retry_attempts):
             try:
                 response = openai.ChatCompletion.create(
                     engine=AZURE_OPENAI_DEPLOYMENT_NAME,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a helpful and accurate assistant for aviation operations. "
-                                "Only use the provided context from company PDF documents to answer. "
-                                "If no relevant information is found, say so honestly."
-                            )
-                        },
-                        {
-                            "role": "user",
-                            "content": f"{user_question}\n\nContext:\n{context}"
-                        }
-                    ],
+                    messages=prompt,
                     temperature=0.5,
-                    max_tokens=800,
+                    max_tokens=800
                 )
                 answer = response.choices[0].message['content']
+
+                # Save assistant reply
+                chat_history.append({"role": "assistant", "content": answer})
+                session["chat_history"] = chat_history
+
                 return jsonify({"answer": answer})
 
             except openai.error.RateLimitError:
-                wait_time = (2 ** attempt) + random.uniform(0, 1)
-                print(f"⚠️ Rate limit hit. Retrying in {wait_time:.2f} seconds...")
-                time.sleep(wait_time)
-
-        return jsonify({"answer": "Rate limit exceeded. Please wait and try again later."}), 429
+                if attempt < retry_attempts - 1:
+                    time.sleep(5)
+                else:
+                    return jsonify({"answer": "Rate limit exceeded. Please wait and try again."}), 429
 
     except Exception as e:
-        print("❌ ERROR during OpenAI or Search call:", str(e))
-        return jsonify({"answer": f"Error connecting to service: {str(e)}"}), 500
+        print("❌ ERROR:", str(e))
+        return jsonify({"answer": f"Error: {str(e)}"}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True)
