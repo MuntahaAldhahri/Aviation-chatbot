@@ -1,4 +1,5 @@
 import os
+import time
 from flask import Flask, request, jsonify, render_template
 import openai
 import requests
@@ -14,7 +15,7 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure OpenAI
+# Configure OpenAI for Azure
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = AZURE_OPENAI_API_VERSION
@@ -33,12 +34,11 @@ def chat():
     data = request.get_json()
     user_question = data.get('message', '').strip()
 
-    # Reject empty inputs to prevent quota waste
     if not user_question:
         return jsonify({"answer": "Please enter a valid question."}), 400
 
     try:
-        # Friendly greetings shortcut
+        # Friendly greetings
         friendly_phrases = ["hi", "hello", "hey", "how are you", "good morning", "good evening", "what's up"]
         if user_question.lower() in friendly_phrases:
             return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
@@ -63,31 +63,37 @@ def chat():
         if not context.strip():
             return jsonify({"answer": "Sorry, I couldn’t find anything related to your question in the uploaded documents."})
 
-        # Step 2: Call Azure OpenAI
-        response = openai.ChatCompletion.create(
-            engine=AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful and accurate assistant for aviation operations. Only use the provided context "
-                        "from company PDF documents to answer. If no relevant information is found, say so honestly."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": f"{user_question}\n\nContext:\n{context}"
-                }
-            ],
-            temperature=0.5,
-            max_tokens=800,
-        )
+        # Step 2: Call Azure OpenAI with retry on RateLimitError
+        retry_attempts = 3
+        for attempt in range(retry_attempts):
+            try:
+                response = openai.ChatCompletion.create(
+                    engine=AZURE_OPENAI_DEPLOYMENT_NAME,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a helpful and accurate assistant for aviation operations. Only use the provided context "
+                                "from company PDF documents to answer. If no relevant information is found, say so honestly."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": f"{user_question}\n\nContext:\n{context}"
+                        }
+                    ],
+                    temperature=0.5,
+                    max_tokens=800,
+                )
+                answer = response.choices[0].message['content']
+                return jsonify({"answer": answer})
 
-        answer = response.choices[0].message['content']
-        return jsonify({"answer": answer})
+            except openai.error.RateLimitError:
+                if attempt < retry_attempts - 1:
+                    time.sleep(5)  # Wait before retry
+                else:
+                    return jsonify({"answer": "Rate limit exceeded. Please wait a few seconds and try again."}), 429
 
-    except openai.error.RateLimitError:
-        return jsonify({"answer": "Rate limit exceeded. Please wait and try again."}), 429
     except Exception as e:
         print("❌ ERROR during OpenAI or Search call:", str(e))
         return jsonify({"answer": f"Error connecting to service: {str(e)}"}), 500
