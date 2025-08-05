@@ -17,28 +17,24 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Configure OpenAI for Azure
+# Configure Azure OpenAI
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = AZURE_OPENAI_API_VERSION
 openai.api_key = AZURE_OPENAI_API_KEY
 
-
 @app.route('/')
 def index():
     return render_template('index.html')
-
 
 @app.route('/healthz')
 def health():
     return "OK", 200
 
-
 @app.route('/reset', methods=['POST'])
 def reset_memory():
     session.pop("chat_history", None)
     return jsonify({"message": "Chat history cleared."})
-
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -62,40 +58,54 @@ def chat():
         }
         search_payload = {
             "search": user_question,
-            "top": 3
+            "top": 3,
+            "queryType": "semantic",
+            "semanticConfiguration": "default",  # make sure it's set in Azure portal
+            "captions": "extractive",
+            "answers": "extractive"
         }
 
         search_response = requests.post(search_url, headers=headers, json=search_payload)
         search_response.raise_for_status()
         results = search_response.json()
-        documents = [doc.get("content", "") for doc in results.get("value", [])]
-        context = "\n\n".join(documents)[:2000]  # truncate if long
 
-        if not context.strip():
-            return jsonify({"answer": "Sorry, I couldn’t find anything related to your question in the uploaded documents."})
+        documents = [doc.get("content", "") for doc in results.get("value", [])]
+        context = "\n\n".join(doc.strip() for doc in documents if doc.strip())[:3000]  # max context size
+
+        if not context:
+            return jsonify({"answer": "❌ I couldn’t find anything related to your question in the provided aviation documents."})
 
         # Step 2: Maintain chat memory
         chat_history = session.get("chat_history", [])
-
-        # Add current user message
         chat_history.append({"role": "user", "content": user_question})
 
-        # Build full prompt
-        prompt = [{"role": "system", "content": (
-            "You are a helpful assistant for aviation operations. Only use the provided document context to answer questions. "
-            "If something is not in the documents, respond with that clearly."
-        )}]
-        prompt += chat_history[-5:]  # Keep recent history
-        prompt.append({"role": "user", "content": f"{user_question}\n\nContext:\n{context}"})
+        # Step 3: Compose Prompt
+        prompt = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful assistant for aviation operations. "
+                    "ONLY answer using the information provided in the DOCUMENTS section. "
+                    "If the answer is not found, reply with: 'This information is not available in the provided documents.'"
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"QUESTION: {user_question}\n\n"
+                    f"DOCUMENTS:\n{context}"
+                )
+            }
+        ]
 
-        # Step 3: Azure OpenAI ChatCompletion
+        # Step 4: Azure OpenAI ChatCompletion
         retry_attempts = 3
         for attempt in range(retry_attempts):
             try:
                 response = openai.ChatCompletion.create(
                     engine=AZURE_OPENAI_DEPLOYMENT_NAME,
                     messages=prompt,
-                    temperature=0.5,
+                    temperature=0.2,
                     max_tokens=800
                 )
                 answer = response.choices[0].message['content']
@@ -114,8 +124,7 @@ def chat():
 
     except Exception as e:
         print("❌ ERROR:", str(e))
-        return jsonify({"answer": f"Error: {str(e)}"}), 500
-
+        return jsonify({"answer": f"An internal error occurred: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
