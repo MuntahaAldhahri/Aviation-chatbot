@@ -1,26 +1,23 @@
 import os
 import time
-import json
-from uuid import uuid4
-
 from flask import Flask, request, jsonify, render_template, session
-import requests
 import openai
+import requests
+from uuid import uuid4
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", str(uuid4()))  # Required for session memory
 
-# ---------- Env ----------
+# Load environment variables
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT") 
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
-
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION")
 AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
-AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")  
+AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# ---------- Azure OpenAI (legacy openai lib) ----------
+# Configure Azure OpenAI
 openai.api_type = "azure"
 openai.api_base = AZURE_OPENAI_ENDPOINT
 openai.api_version = AZURE_OPENAI_API_VERSION
@@ -45,34 +42,36 @@ def reset_memory():
 
 def run_search(query: str, query_type: str = "semantic"):
     """
-    Calls Azure Cognitive Search.
-    query_type: 'semantic' (preferred) or 'simple' (fallback)
+    Call Azure Cognitive Search.
+    We removed 'queryLanguage' for compatibility with your service.
     """
-    url = f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search?api-version=2023-11-01"
-    headers = {"Content-Type": "application/json", "api-key": AZURE_SEARCH_API_KEY}
-
+    search_url = (
+        f"{AZURE_SEARCH_ENDPOINT}/indexes/{AZURE_SEARCH_INDEX_NAME}/docs/search"
+        f"?api-version=2023-11-01"
+    )
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": AZURE_SEARCH_API_KEY
+    }
     payload = {
         "search": query,
         "top": 5,
-        "queryType": query_type,
-        "queryLanguage": "en-us",
+        "queryType": query_type,                 # "semantic" or "simple"
         "answers": "extractive|count-3",
         "captions": "extractive|highlight-true",
         "searchFields": "content,title,filename",
-        "select": "content,title,filename,metadata_storage_name"
+        "select": "content,title,filename,metadata_storage_name",
+        "semanticConfiguration": "default"       # remove if you don't have this config
     }
-    # Keep if you created a semantic config named 'default'. If not, comment this line.
-    payload["semanticConfiguration"] = "default"
-
-    r = requests.post(url, headers=headers, json=payload, timeout=20)
-    r.raise_for_status()
-    return r.json()
+    resp = requests.post(search_url, headers=headers, json=payload, timeout=20)
+    resp.raise_for_status()
+    return resp.json()
 
 
 @app.route('/chat', methods=['POST'])
 def chat():
     data = request.get_json()
-    user_question = (data.get('message') or '').strip()
+    user_question = data.get('message', '').strip()
 
     if not user_question:
         return jsonify({"answer": "Please enter a valid question."}), 400
@@ -82,54 +81,41 @@ def chat():
     if user_question.lower() in friendly_phrases:
         return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
 
+    # Step 1: Azure Cognitive Search (semantic → simple fallback)
     try:
-        # --- 1) Semantic search ---
         results = run_search(user_question, "semantic")
         hits = results.get("value", [])
 
-        # --- 2) Fallback to simple if semantic returns nothing/blank content ---
         if not hits or all(not (h.get("content") or "").strip() for h in hits):
             results = run_search(user_question, "simple")
             hits = results.get("value", [])
 
-        # --- 3) Build context from captions (best passages), then content ---
-        docs = []
-        debug_meta = []
+        # Build context from captions (best passages), fallback to content
+        documents = []
         for h in hits:
             content = (h.get("content") or "").strip()
             captions = " ".join([c.get("text", "") for c in h.get("@search.captions", []) if c.get("text")])
-            best = captions if len(captions) > 60 else content
-            if best:
-                docs.append(best)
-            debug_meta.append({
-                "title": h.get("title"),
-                "filename": h.get("filename") or h.get("metadata_storage_name"),
-                "snippet": (best[:220] + "…") if best else ""
-            })
+            best_passage = captions if len(captions) > 60 else content
+            if best_passage:
+                documents.append(best_passage)
 
-        context = ("\n\n---\n\n".join(docs))[:6000]
+        context = ("\n\n---\n\n".join(documents))[:6000]  # max context size
 
         if not context:
-            # This means retrieval failed (indexing/OCR/skillset/chunking/filters)
-            return jsonify({
-                "answer": ("❌ I couldn’t retrieve matching text from the indexed documents. "
-                           "This likely indicates an indexing/skillset issue (e.g., missing OCR or poor extraction)."),
-                "debug": {"hits": debug_meta}
-            })
+            return jsonify({"answer": "❌ I couldn’t find anything related to your question in the provided aviation documents."})
 
-        # --- 4) Maintain chat memory (optional) ---
+        # Step 2: Maintain chat memory
         chat_history = session.get("chat_history", [])
         chat_history.append({"role": "user", "content": user_question})
 
-        # --- 5) Strict, grounded prompt ---
+        # Step 3: Compose Prompt
         prompt = [
             {
                 "role": "system",
                 "content": (
                     "You are a helpful assistant for aviation operations. "
-                    "Answer ONLY using the information provided in the DOCUMENTS section. "
-                    "If the answer is not found, reply exactly: "
-                    "'This information is not available in the provided documents.'"
+                    "ONLY answer using the information provided in the DOCUMENTS section. "
+                    "If the answer is not found, reply with: 'This information is not available in the provided documents.'"
                 )
             },
             {
@@ -138,22 +124,24 @@ def chat():
             }
         ]
 
-        # --- 6) Azure OpenAI call with retries ---
+        # Step 4: Azure OpenAI ChatCompletion
         retry_attempts = 3
         for attempt in range(retry_attempts):
             try:
                 response = openai.ChatCompletion.create(
                     engine=AZURE_OPENAI_DEPLOYMENT_NAME,
                     messages=prompt,
-                    temperature=0.1,
+                    temperature=0.2,
                     max_tokens=800
                 )
                 answer = response.choices[0].message['content']
 
+                # Save assistant reply
                 chat_history.append({"role": "assistant", "content": answer})
                 session["chat_history"] = chat_history
 
-                return jsonify({"answer": answer, "debug": {"hits": debug_meta}})
+                return jsonify({"answer": answer})
+
             except openai.error.RateLimitError:
                 if attempt < retry_attempts - 1:
                     time.sleep(5)
@@ -161,11 +149,7 @@ def chat():
                     return jsonify({"answer": "Rate limit exceeded. Please wait and try again."}), 429
 
     except requests.HTTPError as e:
-        # Surface Search API errors clearly
-        try:
-            detail = e.response.text
-        except Exception:
-            detail = str(e)
+        detail = e.response.text if getattr(e, "response", None) else str(e)
         return jsonify({"answer": f"Search API error: {detail}"}), 500
     except Exception as e:
         print("❌ ERROR:", str(e))
