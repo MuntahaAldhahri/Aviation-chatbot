@@ -1,7 +1,7 @@
 import os
 import time
 from uuid import uuid4
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 
 from flask import Flask, request, jsonify, render_template, session
 import requests
@@ -25,7 +25,7 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
 AZURE_SEARCH_ENDPOINT = (os.getenv("AZURE_SEARCH_ENDPOINT") or "").rstrip("/")
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
-# Optional: USE_SEMANTIC=true to enable semantic search (requires semantic config named "default")
+# Optional: USE_SEMANTIC=true to enable semantic search (requires a semantic config named "default")
 USE_SEMANTIC = (os.getenv("USE_SEMANTIC", "false").strip().lower() == "true")
 
 # Helpful warnings if any env is missing
@@ -54,35 +54,67 @@ openai.api_version = AZURE_OPENAI_API_VERSION
 # -------------------------
 # Helpers
 # -------------------------
+FALLBACK_SENTENCE = "This information is not available in the provided documents."
+
 def build_search_payload(query: str, use_semantic: bool) -> dict:
     """
     Build a Cognitive Search request payload.
     'select' includes fields that exist in both your current and cleaned schema.
     """
-    select_fields = "content,title,filename,metadata_storage_name"
+    # Include metadata_storage_path so we can de-duplicate by file
+    select_fields = "content,title,filename,metadata_storage_name,metadata_storage_path"
+
     if use_semantic:
         return {
             "search": query or "*",
-            "top": 3,
+            "top": 8,  # get enough to dedupe down to ~3 uniques
             "queryType": "semantic",
             "semanticConfiguration": "default",
             "answers": "extractive|count-3",
             "captions": "extractive",
-            # "queryLanguage": "en-us",  # optional
             "select": select_fields
         }
+
+    # Simple keyword search with highlights to get good snippets
     return {
         "search": query or "*",
-        "top": 3,
+        "top": 8,
         "queryType": "simple",
+        "highlight": "content",
+        "highlightPreTag": "<em>",
+        "highlightPostTag": "</em>",
         "select": select_fields
     }
 
 
+def _pick_name(d: Dict[str, Any]) -> str:
+    return d.get("title") or d.get("filename") or d.get("metadata_storage_name") or "document"
+
+
+def _pick_snippet(d: Dict[str, Any]) -> str:
+    # Prefer semantic captions when present
+    caps = d.get("@search.captions") or []
+    if caps and isinstance(caps, list) and caps[0].get("text"):
+        return caps[0]["text"]
+
+    # Otherwise use highlights if present (simple mode)
+    hl = d.get("@search.highlights", {})
+    if isinstance(hl, dict):
+        arr = hl.get("content")
+        if arr and isinstance(arr, list):
+            return arr[0]
+
+    # Fallback to raw content (trim)
+    txt = (d.get("content") or "").strip()
+    return txt[:500]
+
+
 def cognitive_search(query: str) -> Tuple[List[str], List[str]]:
     """
-    Run a search query against the Azure Cognitive Search index.
-    Returns (contents, sources) where sources are filenames for debugging/citation.
+    Query Azure Cognitive Search and return (context_chunks, unique_source_names).
+    - De-duplicates hits by metadata_storage_path (file).
+    - Returns at most 3 unique documents.
+    - Each chunk is tagged with [SOURCE i: name] for prompting.
     """
     if not AZURE_SEARCH_ENDPOINT or not AZURE_SEARCH_INDEX_NAME or not AZURE_SEARCH_API_KEY:
         raise RuntimeError("Azure Search configuration is missing. Check your env vars.")
@@ -104,19 +136,32 @@ def cognitive_search(query: str) -> Tuple[List[str], List[str]]:
     data = resp.json() or {}
     hits = data.get("value", []) or []
 
-    contents, sources = [], []
-    for d in hits:
-        txt = (d.get("content") or "").strip()
-        # prefer 'title', then 'filename', then 'metadata_storage_name'
-        name = d.get("title") or d.get("filename") or d.get("metadata_storage_name") or "document"
-        if txt:
-            contents.append(txt)
-            sources.append(str(name))
+    # Deduplicate by file (metadata_storage_path)
+    seen_ids = set()
+    chunks: List[str] = []
+    sources: List[str] = []
 
-    if not contents:
+    for d in hits:
+        file_id = d.get("metadata_storage_path") or _pick_name(d)
+        if file_id in seen_ids:
+            continue
+        seen_ids.add(file_id)
+
+        name = _pick_name(d)
+        snippet = _pick_snippet(d)
+        if not snippet:
+            continue
+
+        chunks.append(f"[SOURCE {len(chunks)+1}: {name}]\n{snippet}")
+        sources.append(str(name))
+
+        if len(chunks) >= 3:
+            break
+
+    if not chunks:
         print("[DEBUG] No hits for query:", query, "Raw response:", data)
 
-    return contents, sources
+    return chunks, sources
 
 
 def call_openai_with_context(user_question: str, context: str) -> str:
@@ -131,7 +176,7 @@ def call_openai_with_context(user_question: str, context: str) -> str:
         "You are a helpful assistant for aviation operations.\n"
         "You MUST base your answer ONLY on the text provided in the DOCUMENTS section.\n"
         "If the answer is not present in the DOCUMENTS, reply EXACTLY with:\n"
-        "This information is not available in the provided documents.\n"
+        f"{FALLBACK_SENTENCE}\n"
         "Do not add any other text when you use that sentence."
     )
     messages = [
@@ -179,13 +224,13 @@ def reset_memory():
 @app.route("/debug-search")
 def debug_search():
     """
-    Quick endpoint to inspect what search returns.
+    Quick endpoint to inspect what search returns (deduped).
     Usage: /debug-search?q=Annex
     """
     q = request.args.get("q", "Air Traffic")
     try:
-        docs, sources = cognitive_search(q)
-        return jsonify({"query": q, "hits": len(docs), "sources": sources, "preview": docs})
+        chunks, sources = cognitive_search(q)
+        return jsonify({"query": q, "hits": len(chunks), "sources": sources, "preview": chunks})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -203,15 +248,11 @@ def chat():
         if user_question.lower() in friendly:
             return jsonify({"answer": "Hello! 👋 I'm your assistant. Ask me anything from the aviation documents!"})
 
-        # 1) Retrieve from Cognitive Search
-        docs, sources = cognitive_search(user_question)
-        if not docs:
+        # 1) Retrieve from Cognitive Search (deduped, with snippets)
+        chunks, sources = cognitive_search(user_question)
+        if not chunks:
             return jsonify({"answer": "❌ I couldn’t find anything related to your question in the provided aviation documents."})
 
-        # Build a source-tagged context for transparency
-        chunks = []
-        for i, (text, src) in enumerate(zip(docs, sources), start=1):
-            chunks.append(f"[SOURCE {i}: {src}]\n{text}")
         context = ("\n\n".join(chunks))[:3000]  # cap for token safety
 
         # 2) (optional) memory
@@ -221,7 +262,13 @@ def chat():
         # 3) Generate answer
         answer = call_openai_with_context(user_question, context)
 
-        # Append sources so you can see where it came from
+        # If we got the exact fallback, don't add sources (keeps it clean)
+        if answer.strip() == FALLBACK_SENTENCE:
+            chat_history.append({"role": "assistant", "content": answer})
+            session["chat_history"] = chat_history
+            return jsonify({"answer": answer})
+
+        # Otherwise, append deduped sources
         answer_with_sources = f"{answer}\n\nSources: " + ", ".join(f"[{i+1}] {s}" for i, s in enumerate(sources))
         chat_history.append({"role": "assistant", "content": answer_with_sources})
         session["chat_history"] = chat_history
